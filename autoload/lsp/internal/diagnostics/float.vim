@@ -29,6 +29,7 @@ function! lsp#internal#diagnostics#float#_enable() abort
     " want to hide the float.
     let s:Dispose_CursorHold = lsp#callbag#pipe(
         \ lsp#callbag#fromEvent(['CursorHold']),
+        \ lsp#callbag#filter({_->g:lsp_diagnostics_float_hide_on_cursor_hold}),
         \ lsp#callbag#subscribe({_->s:hide_float()}),
         \ )
 
