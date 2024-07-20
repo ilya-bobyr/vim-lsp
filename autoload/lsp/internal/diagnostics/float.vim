@@ -22,25 +22,7 @@ function! lsp#internal#diagnostics#float#_enable() abort
     let s:Dispose_CursorMoved = lsp#callbag#pipe(
         \ lsp#callbag#fromEvent(['CursorMoved']),
         \ lsp#callbag#tap({_->s:hide_float()}),
-        \ lsp#callbag#filter({_->g:lsp_diagnostics_float_cursor}),
-        \ lsp#callbag#map({_->{
-        \   'bufnr': bufnr('%'),
-        \   'curpos': getcurpos()[0:2],
-        \   'changedtick': b:changedtick
-        \ }}),
-        \ lsp#callbag#debounceTime(g:lsp_diagnostics_float_delay),
-        \ lsp#callbag#filter({_->
-        \      mode() is# 'n'
-        \   || g:lsp_diagnostics_float_insert_mode_enabled && mode() is# 'i'
-        \ }),
-        \ lsp#callbag#distinctUntilChanged({a,b ->
-        \      a['bufnr'] == b['bufnr']
-        \   && a['curpos'] == b['curpos']
-        \   && a['changedtick'] == b['changedtick']
-        \ }),
-        \ lsp#callbag#filter({_->getbufvar(bufnr('%'), '&buftype') !=# 'terminal' }),
-        \ lsp#callbag#map({_->lsp#internal#diagnostics#under_cursor#get_diagnostic()}),
-        \ lsp#callbag#subscribe({x->s:show_float(x)}),
+        \ s:subscribe_show_float_delayed(),
         \ )
 
     " CursorHold - If the cursor did not move long enough in the normal mode, we
@@ -58,6 +40,15 @@ function! lsp#internal#diagnostics#float#_enable() abort
         \ lsp#callbag#filter({_->!g:lsp_diagnostics_float_insert_mode_enabled}),
         \ lsp#callbag#subscribe({_->s:hide_float()}),
         \ )
+
+    " InsertLeave - If insert mode is disabled, we may want to show the float
+    " after the insert mode is exited.  |CursorMoved| will not be triggered if
+    " the cursor didn't move.
+    let s:Dispose_InsertLeave = lsp#callbag#pipe(
+        \ lsp#callbag#fromEvent(['InsertLeave']),
+        \ lsp#callbag#filter({_->!g:lsp_diagnostics_float_insert_mode_enabled}),
+        \ s:subscribe_show_float_delayed(),
+        \ )
 endfunction
 
 function! lsp#internal#diagnostics#float#_disable() abort
@@ -74,7 +65,40 @@ function! lsp#internal#diagnostics#float#_disable() abort
         call s:Dispose_InsertEnter()
         unlet s:Dispose_InsertEnter
     endif
+    if exists('s:Dispose_InsertLeave')
+        call s:Dispose_InsertLeave()
+        unlet s:Dispose_InsertLeave
+    endif
     let s:enabled = 0
+endfunction
+
+" Constructs a callbag subscription that will show the diagnostics float after
+" the configured delay, but only if it still needs to be shown.
+function! s:subscribe_show_float_delayed() abort
+    let l:Callbag = {s->lsp#callbag#pipe(
+        \ s,
+        \ lsp#callbag#filter({_->g:lsp_diagnostics_float_cursor}),
+        \ lsp#callbag#filter({_->getbufvar(bufnr('%'), '&buftype') !=# 'terminal' }),
+        \ lsp#callbag#map({_->{
+        \   'bufnr': bufnr('%'),
+        \   'curpos': getcurpos()[0:2],
+        \   'changedtick': b:changedtick
+        \ }}),
+        \ lsp#callbag#debounceTime(g:lsp_diagnostics_float_delay),
+        \ lsp#callbag#filter({_->
+        \      mode() is# 'n'
+        \   || g:lsp_diagnostics_float_insert_mode_enabled && mode() is# 'i'
+        \ }),
+        \ lsp#callbag#distinctUntilChanged({a,b ->
+        \      a['bufnr'] == b['bufnr']
+        \   && a['curpos'] == b['curpos']
+        \   && a['changedtick'] == b['changedtick']
+        \ }),
+        \ lsp#callbag#map({_->lsp#internal#diagnostics#under_cursor#get_diagnostic()}),
+        \ lsp#callbag#subscribe({x->s:show_float(x)})
+        \ )}
+
+    return l:Callbag
 endfunction
 
 function! s:show_float(diagnostic) abort
