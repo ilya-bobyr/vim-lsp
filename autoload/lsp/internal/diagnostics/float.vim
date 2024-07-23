@@ -20,7 +20,8 @@ function! lsp#internal#diagnostics#float#_enable() abort
     " 'g:lsp_diagnostics_float_delay'.  So we always call 'hide_float()' for
     " this event, and may call 'show_float()' later.
     let s:Dispose_CursorMoved = lsp#callbag#pipe(
-        \ lsp#callbag#fromEvent(['CursorMoved']),
+        \ lsp#callbag#fromEvent(['CursorMoved', 'CursorMovedI']),
+        \ s:create_cursor_activity_filter(),
         \ lsp#callbag#tap({_->s:hide_float()}),
         \ s:subscribe_show_float_delayed(),
         \ )
@@ -28,7 +29,7 @@ function! lsp#internal#diagnostics#float#_enable() abort
     " CursorHold - If the cursor did not move long enough in the normal mode, we
     " want to hide the float.
     let s:Dispose_CursorHold = lsp#callbag#pipe(
-        \ lsp#callbag#fromEvent(['CursorHold']),
+        \ lsp#callbag#fromEvent(['CursorHold', 'CursorHoldI']),
         \ lsp#callbag#filter({_->g:lsp_diagnostics_float_hide_on_cursor_hold}),
         \ lsp#callbag#subscribe({_->s:hide_float()}),
         \ )
@@ -48,6 +49,7 @@ function! lsp#internal#diagnostics#float#_enable() abort
     let s:Dispose_InsertLeave = lsp#callbag#pipe(
         \ lsp#callbag#fromEvent(['InsertLeave']),
         \ lsp#callbag#filter({_->!g:lsp_diagnostics_float_insert_mode_enabled}),
+        \ s:create_cursor_activity_filter(),
         \ s:subscribe_show_float_delayed(),
         \ )
 endfunction
@@ -73,6 +75,33 @@ function! lsp#internal#diagnostics#float#_disable() abort
     let s:enabled = 0
 endfunction
 
+" Constructs an operator that filters out events that trigger multiple times for
+" the same combination of [buffer number, cursor position, b:changedtick]
+"
+" Produces output that holds an object like this:
+" {
+"     'bufnr': bufnr('%'),
+"     'curpos': getcurpos()[0:2],
+"     'changedtick': b:changedtick
+" }
+function! s:create_cursor_activity_filter() abort
+    let l:Operator = {s->lsp#callbag#pipe(
+        \ s,
+        \ lsp#callbag#map({_->{
+        \   'bufnr': bufnr('%'),
+        \   'curpos': getcurpos()[0:2],
+        \   'changedtick': b:changedtick
+        \ }}),
+        \ lsp#callbag#distinctUntilChanged({a,b ->
+        \      a['bufnr'] == b['bufnr']
+        \   && a['curpos'] == b['curpos']
+        \   && a['changedtick'] == b['changedtick']
+        \ }),
+        \)}
+
+    return l:Operator
+endfunction
+
 " Constructs a callbag subscription that will show the diagnostics float after
 " the configured delay, but only if it still needs to be shown.
 function! s:subscribe_show_float_delayed() abort
@@ -80,11 +109,6 @@ function! s:subscribe_show_float_delayed() abort
         \ s,
         \ lsp#callbag#filter({_->g:lsp_diagnostics_float_cursor}),
         \ lsp#callbag#filter({_->getbufvar(bufnr('%'), '&buftype') !=# 'terminal' }),
-        \ lsp#callbag#map({_->{
-        \   'bufnr': bufnr('%'),
-        \   'curpos': getcurpos()[0:2],
-        \   'changedtick': b:changedtick
-        \ }}),
         \ lsp#callbag#debounceTime(g:lsp_diagnostics_float_delay),
         \ lsp#callbag#filter({_->
         \      mode() is# 'n'
